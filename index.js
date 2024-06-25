@@ -12,23 +12,28 @@ import { fromString, toString } from 'uint8arrays';
 import axios from 'axios';
 import { saveEthPrice } from './db.js';
 import pkg from 'ethereumjs-util';
-const { ecsign, toBuffer, bufferToHex } = pkg;
+const { ecsign, toBuffer, bufferToHex, keccak256 } = pkg;
 import crypto from 'crypto';
 import { identify } from '@libp2p/identify';
 
 const privateKey = crypto.randomBytes(32);
+const nodeId = keccak256(privateKey).toString('hex');
+
+let lastMessageTime = 0;
 
 const fetchEthPrice = async () => {
-  console.log('Fetching ETH price...');
   const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
   return response.data.ethereum.usd;
 };
 
 const signMessage = (message) => {
-  console.log('Signing message...');
   const messageHash = crypto.createHash('sha256').update(message).digest();
   const { r, s, v } = ecsign(messageHash, privateKey);
   return { r: bufferToHex(r), s: bufferToHex(s), v };
+};
+
+const isSignatureExist = (signatures, newSignature) => {
+  return signatures.some(sig => sig.r === newSignature.r && sig.s === newSignature.s && sig.v === newSignature.v);
 };
 
 const isBootstrapNode = process.env.BOOTSTRAP_NODE === 'true';
@@ -83,13 +88,24 @@ libp2p.services.pubsub.addEventListener('message', async (event) => {
   try {
     const message = JSON.parse(toString(event.detail.data));
     console.log('Message received:', message);
+
     const signatures = message.signatures || [];
     const newSignature = signMessage(message.price.toString());
-    signatures.push(newSignature);
 
-    if (signatures.length >= 3) {
-      console.log('Message has 3 or more signatures, saving to database...');
+    if (!isSignatureExist(signatures, newSignature)) {
+      signatures.push(newSignature);
+      console.log('New signature added:', newSignature);
+    } else {
+      console.log('Signature already exists. Ignoring.');
+      return; // Do not republish if signature already exists
+    }
+
+    console.log(`Total signatures: ${signatures.length}`);
+    const currentTime = Date.now();
+    if (signatures.length >= 3 && currentTime - lastMessageTime > 30000) {
+      console.log('Message has enough signatures and 30 seconds have passed since the last message. Saving to database...');
       await saveEthPrice(message.price, signatures);
+      lastMessageTime = currentTime;
       console.log('Message saved to database.');
     } else {
       console.log('Republishing message with new signature...');
@@ -149,6 +165,7 @@ if (isBootstrapNode) {
 
 if (!isBootstrapNode) {
   setInterval(async () => {
+    console.log('Fetching ETH price...');
     const price = await fetchEthPrice();
     console.log("ETH PRICE", price);
     const message = JSON.stringify({ price, signatures: [signMessage(price.toString())] });
