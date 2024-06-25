@@ -14,7 +14,6 @@ import { saveEthPrice } from './db.js';
 import pkg from 'ethereumjs-util';
 const { ecsign, toBuffer, bufferToHex } = pkg;
 import crypto from 'crypto';
-import { bootstrap } from '@libp2p/bootstrap';
 import { identify } from '@libp2p/identify';
 
 const privateKey = crypto.randomBytes(32);
@@ -30,13 +29,12 @@ const signMessage = (message) => {
   return { r: bufferToHex(r), s: bufferToHex(s), v };
 };
 
-const bootstrapNodes = [
-  '/ip4/127.0.0.1/tcp/9090/ws/p2p/YourBootstrapNodePeerId' // Replace with actual bootstrap node addresses
-];
+const isBootstrapNode = process.env.BOOTSTRAP_NODE === 'true';
+const bootstrapNodeAddr = '/ip4/10.146.66.56/tcp/15002/ws/p2p/12D3KooWRkiCiyU9cZYs8TkUKahCXNj1w5beHs1nvtPF7GdzGW4B';
 
 const libp2p = await createLibp2p({
   addresses: {
-    listen: ['/webrtc'],
+    listen: isBootstrapNode ? ['/ip4/0.0.0.0/tcp/15002/ws'] : ['/ip4/0.0.0.0/tcp/15003/ws'],
   },
   transports: [
     webSockets({ filter: filters.all }),
@@ -45,11 +43,7 @@ const libp2p = await createLibp2p({
   ],
   connectionEncryption: [noise()],
   streamMuxers: [yamux()],
-  peerDiscovery: [
-    bootstrap({
-      list: bootstrapNodes,
-    }),
-  ],
+  peerDiscovery: [],
   services: {
     identify: identify(),
     pubsub: gossipsub(),
@@ -67,6 +61,7 @@ console.log(`Subscribed to topic: ${topic}`);
 
 libp2p.services.pubsub.addEventListener('message', async (event) => {
   const message = JSON.parse(toString(event.detail.data));
+  console.log('Message received:', message);
   const signatures = message.signatures || [];
   const newSignature = signMessage(message.price.toString());
   signatures.push(newSignature);
@@ -79,35 +74,42 @@ libp2p.services.pubsub.addEventListener('message', async (event) => {
   }
 });
 
-const waitForSubscribers = async () => {
-  let hasSubscribers = false;
-  while (!hasSubscribers) {
-    const subscribers = libp2p.services.pubsub.getSubscribers(topic);
-    if (subscribers.length > 0) {
-      hasSubscribers = true;
-    } else {
-      console.log('Waiting for subscribers...');
-      await new Promise(resolve => setTimeout(resolve, 5000));
-    }
-  }
-};
+libp2p.addEventListener('peer:discovery', (peer) => {
+  console.log(`Discovered peer: ${peer.id.toString()}`);
+});
 
-await waitForSubscribers();
-console.log('Subscribers found. Starting to publish messages.');
+libp2p.addEventListener('peer:connect', (connection) => {
+  console.log(`Connected to peer: ${connection.remotePeer.toString()}`);
+});
 
-setInterval(async () => {
-  console.log('Fetching ETH price...');
-  const price = await fetchEthPrice();
-  console.log("ETH PRICE", price);
-  const message = JSON.stringify({ price, signatures: [signMessage(price.toString())] });
-  console.log("MESSAGE", message);
+libp2p.addEventListener('peer:disconnect', (connection) => {
+  console.log(`Disconnected from peer: ${connection.remotePeer.toString()}`);
+});
 
-  try {
-    await libp2p.services.pubsub.publish(topic, fromString(message));
-    console.log("PUBLISHED");
-  } catch (error) {
-    console.error('PublishError:', error.message);
-  }
-}, 30000);
-
+await libp2p.start();
 console.log('Node started.');
+
+if (isBootstrapNode) {
+  const multiaddrs = libp2p.getMultiaddrs();
+  if (multiaddrs.length > 0) {
+    console.log('Bootstrap node addresses:');
+    multiaddrs.forEach(addr => console.log(addr.toString()));
+  } else {
+    console.log('No multiaddresses found.');
+  }
+} else {
+  await libp2p.dial(multiaddr(bootstrapNodeAddr));
+  console.log(`Dialed bootstrap node at ${bootstrapNodeAddr}`);
+}
+
+if (!isBootstrapNode) {
+  setInterval(async () => {
+    console.log('Fetching ETH price...');
+    const price = await fetchEthPrice();
+    console.log("ETH PRICE", price);
+    const message = JSON.stringify({ price, signatures: [signMessage(price.toString())] });
+    console.log("MESSAGE", message);
+    await libp2p.services.pubsub.publish(topic, fromString(newMessage));
+    console.log("PUBLISHED");
+  }, 30000);
+}
