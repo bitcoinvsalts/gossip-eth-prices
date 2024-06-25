@@ -51,6 +51,7 @@ const libp2p = await createLibp2p({
   },
   connectionManager: {
     minConnections: 0,
+    dialTimeout: 60000 // 60 seconds
   }
 });
 
@@ -60,30 +61,40 @@ libp2p.services.pubsub.subscribe(topic);
 console.log(`Subscribed to topic: ${topic}`);
 
 libp2p.services.pubsub.addEventListener('message', async (event) => {
-  const message = JSON.parse(toString(event.detail.data));
-  console.log('Message received:', message);
-  const signatures = message.signatures || [];
-  const newSignature = signMessage(message.price.toString());
-  signatures.push(newSignature);
+  try {
+    const message = JSON.parse(toString(event.detail.data));
+    console.log('Message received:', message);
+    const signatures = message.signatures || [];
+    const newSignature = signMessage(message.price.toString());
+    signatures.push(newSignature);
 
-  if (signatures.length >= 3) {
-    await saveEthPrice(message.price, signatures);
-  } else {
-    const newMessage = JSON.stringify({ price: message.price, signatures });
-    await libp2p.services.pubsub.publish(topic, fromString(newMessage));
+    if (signatures.length >= 3) {
+      await saveEthPrice(message.price, signatures);
+    } else {
+      const newMessage = JSON.stringify({ price: message.price, signatures });
+      await libp2p.services.pubsub.publish(topic, fromString(newMessage));
+    }
+  } catch (error) {
+    console.error('Error processing message:', error);
   }
 });
 
 libp2p.addEventListener('peer:discovery', (peer) => {
-  console.log(`Discovered peer: ${peer.id.toString()}`);
+  if (peer && peer.id) {
+    console.log(`Discovered peer: ${peer.id.toString()}`);
+  }
 });
 
 libp2p.addEventListener('peer:connect', (connection) => {
-  console.log(`Connected to peer: ${connection.remotePeer.toString()}`);
+  if (connection && connection.remotePeer) {
+    console.log(`Connected to peer: ${connection.remotePeer.toString()}`);
+  }
 });
 
 libp2p.addEventListener('peer:disconnect', (connection) => {
-  console.log(`Disconnected from peer: ${connection.remotePeer.toString()}`);
+  if (connection && connection.remotePeer) {
+    console.log(`Disconnected from peer: ${connection.remotePeer.toString()}`);
+  }
 });
 
 await libp2p.start();
@@ -98,8 +109,12 @@ if (isBootstrapNode) {
     console.log('No multiaddresses found.');
   }
 } else {
-  await libp2p.dial(multiaddr(bootstrapNodeAddr));
-  console.log(`Dialed bootstrap node at ${bootstrapNodeAddr}`);
+  try {
+    await libp2p.dial(multiaddr(bootstrapNodeAddr));
+    console.log(`Dialed bootstrap node at ${bootstrapNodeAddr}`);
+  } catch (error) {
+    console.error(`Failed to dial bootstrap node: ${error.message}`);
+  }
 }
 
 if (!isBootstrapNode) {
@@ -109,7 +124,7 @@ if (!isBootstrapNode) {
     console.log("ETH PRICE", price);
     const message = JSON.stringify({ price, signatures: [signMessage(price.toString())] });
     console.log("MESSAGE", message);
-    await libp2p.services.pubsub.publish(topic, fromString(newMessage));
+    await libp2p.services.pubsub.publish(topic, fromString(message));
     console.log("PUBLISHED");
   }, 30000);
 }
