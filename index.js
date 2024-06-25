@@ -1,10 +1,10 @@
 import { createLibp2p } from 'libp2p';
 import { gossipsub } from '@chainsafe/libp2p-gossipsub';
+import { identify } from '@libp2p/identify'
 import { noise } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { dcutr } from '@libp2p/dcutr';
-import { identify } from '@chainsafe/libp2p-identify';
 import { webRTC } from '@libp2p/webrtc';
 import { webSockets } from '@libp2p/websockets';
 import * as filters from '@libp2p/websockets/filters';
@@ -47,7 +47,7 @@ const libp2p = await createLibp2p({
   },
   connectionManager: {
     minConnections: 0,
-  },
+  }
 });
 
 const topic = 'eth-price';
@@ -68,7 +68,14 @@ libp2p.services.pubsub.addEventListener('message', async (event) => {
 });
 
 setInterval(async () => {
+  console.log('start.....')
   const price = await fetchEthPrice();
+  console.log("ETH PRICE", price)
   const message = JSON.stringify({ price, signatures: [signMessage(price.toString())] });
+  console.log("MESSAGE", message)
   await libp2p.services.pubsub.publish(topic, fromString(message));
-}, 30000);
+  console.log("PUBLISHED")
+}, 3000);
+
+
+console.log('start.')
