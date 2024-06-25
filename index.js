@@ -30,30 +30,47 @@ const signMessage = (message) => {
 };
 
 const isBootstrapNode = process.env.BOOTSTRAP_NODE === 'true';
-const bootstrapNodeAddr = '/ip4/127.0.0.1/tcp/15002/ws/p2p/12D3KooWLcBfktPoaD2V39VnGrnPkZuckaSUAo7rgNBPMS9HYiYX';
+const bootstrapNodeAddr = process.env.BOOTSTRAP_ADDRESS;
 
-const libp2p = await createLibp2p({
-  addresses: {
-    listen: isBootstrapNode ? ['/ip4/0.0.0.0/tcp/15002/ws'] : ['/ip4/0.0.0.0/tcp/15003/ws'],
-  },
-  transports: [
-    webSockets({ filter: filters.all }),
-    webRTC(),
-    circuitRelayTransport({ discoverRelays: 1 }),
-  ],
-  connectionEncryption: [noise()],
-  streamMuxers: [yamux()],
-  peerDiscovery: [],
-  services: {
-    identify: identify(),
-    pubsub: gossipsub(),
-    dcutr: dcutr(),
-  },
-  connectionManager: {
-    minConnections: 0,
-    dialTimeout: 60000 // 60 seconds
+const createLibp2pNode = async (port, retryCount = 0) => {
+  try {
+    const libp2p = await createLibp2p({
+      addresses: {
+        listen: [`/ip4/0.0.0.0/tcp/${port}/ws`],
+      },
+      transports: [
+        webSockets({ filter: filters.all }),
+        webRTC(),
+        circuitRelayTransport({ discoverRelays: 1 }),
+      ],
+      connectionEncryption: [noise()],
+      streamMuxers: [yamux()],
+      peerDiscovery: [],
+      services: {
+        identify: identify(),
+        pubsub: gossipsub(),
+        dcutr: dcutr(),
+      },
+      connectionManager: {
+        minConnections: 0,
+        dialTimeout: 60000 // 60 seconds
+      }
+    });
+
+    return libp2p;
+  } catch (error) {
+    if (retryCount < 5) {
+      console.warn(`Port ${port} is not available, trying another port... (${retryCount + 1}/5)`);
+      port = Math.floor(Math.random() * (16000 - 15003 + 1)) + 15003;
+      return createLibp2pNode(port, retryCount + 1);
+    } else {
+      throw new Error(`Failed to create libp2p node after ${retryCount + 1} attempts: ${error.message}`);
+    }
   }
-});
+};
+
+const port = isBootstrapNode ? 15002 : Math.floor(Math.random() * (16000 - 15003 + 1)) + 15003;
+const libp2p = await createLibp2pNode(port);
 
 const topic = 'eth-price';
 
@@ -133,5 +150,5 @@ if (!isBootstrapNode) {
     console.log("MESSAGE", message);
     await libp2p.services.pubsub.publish(topic, fromString(message));
     console.log("PUBLISHED");
-  }, 10000);
+  }, 30000);
 }
