@@ -1,6 +1,4 @@
 import { createLibp2p } from 'libp2p';
-import { gossipsub } from '@chainsafe/libp2p-gossipsub';
-import { identify } from '@libp2p/identify'
 import { noise } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
@@ -15,6 +13,9 @@ import { saveEthPrice } from './db.js';
 import pkg from 'ethereumjs-util';
 const { ecsign, toBuffer, bufferToHex } = pkg;
 import crypto from 'crypto';
+import { gossipsub } from '@chainsafe/libp2p-gossipsub';
+import { bootstrap } from '@libp2p/bootstrap';
+import { identify } from '@libp2p/identify';
 
 const privateKey = crypto.randomBytes(32);
 
@@ -29,6 +30,10 @@ const signMessage = (message) => {
   return { r: bufferToHex(r), s: bufferToHex(s), v };
 };
 
+const bootstrapNodes = [
+  '/ip4/127.0.0.1/tcp/9090/ws/p2p/YourBootstrapNodePeerId' // Replace with actual bootstrap node addresses
+];
+
 const libp2p = await createLibp2p({
   addresses: {
     listen: ['/webrtc'],
@@ -40,6 +45,11 @@ const libp2p = await createLibp2p({
   ],
   connectionEncryption: [noise()],
   streamMuxers: [yamux()],
+  peerDiscovery: [
+    bootstrap({
+      list: bootstrapNodes,
+    }),
+  ],
   services: {
     identify: identify(),
     pubsub: gossipsub(),
@@ -68,14 +78,13 @@ libp2p.services.pubsub.addEventListener('message', async (event) => {
 });
 
 setInterval(async () => {
-  console.log('start.....')
+  console.log('start.....');
   const price = await fetchEthPrice();
-  console.log("ETH PRICE", price)
+  console.log("ETH PRICE", price);
   const message = JSON.stringify({ price, signatures: [signMessage(price.toString())] });
-  console.log("MESSAGE", message)
+  console.log("MESSAGE", message);
   await libp2p.services.pubsub.publish(topic, fromString(message));
-  console.log("PUBLISHED")
-}, 3000);
+  console.log("PUBLISHED");
+}, 30000);
 
-
-console.log('start.')
+console.log('start.');
