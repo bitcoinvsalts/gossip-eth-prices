@@ -107,11 +107,13 @@ libp2p.services.pubsub.addEventListener('message', async (event) => {
       await saveEthPrice(message.price, signatures);
       lastMessageTime = currentTime;
       console.log('Message saved to database.');
-    } else {
+    } else if (signatures.length < 3) {
       console.log('Republishing message with new signature...');
       const newMessage = JSON.stringify({ price: message.price, signatures });
       await libp2p.services.pubsub.publish(topic, fromString(newMessage));
       console.log('Message republished.');
+    } else {
+      console.log('Waiting for 30 seconds to pass before saving the message to the database.');
     }
   } catch (error) {
     console.error('Error processing message:', error);
