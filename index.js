@@ -62,6 +62,20 @@ const libp2p = await createLibp2p({
 
 const topic = 'eth-price';
 
+// Function to log peer connections
+const logPeers = () => {
+  console.log('Connected peers:', libp2p.getPeers().map(peer => peer.toString()));
+};
+
+// Function to log subscribed topics
+const logSubscribedTopics = () => {
+  const subscribedTopics = libp2p.services.pubsub.getTopics();
+  console.log('Subscribed topics:', subscribedTopics);
+};
+
+libp2p.addEventListener('peer:connect', logPeers);
+libp2p.addEventListener('peer:disconnect', logPeers);
+
 libp2p.services.pubsub.subscribe(topic);
 libp2p.services.pubsub.addEventListener('message', async (event) => {
   const message = JSON.parse(toString(event.detail.data));
@@ -77,8 +91,10 @@ libp2p.services.pubsub.addEventListener('message', async (event) => {
   }
 });
 
+libp2p.services.pubsub.addEventListener('subscription-change', logSubscribedTopics);
+
 setInterval(async () => {
-  console.log('start.....');
+  console.log('Fetching ETH price...');
   const price = await fetchEthPrice();
   console.log("ETH PRICE", price);
   const message = JSON.stringify({ price, signatures: [signMessage(price.toString())] });
@@ -87,4 +103,4 @@ setInterval(async () => {
   console.log("PUBLISHED");
 }, 30000);
 
-console.log('start.');
+console.log('Node started.');
