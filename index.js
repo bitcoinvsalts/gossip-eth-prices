@@ -1,4 +1,5 @@
 import { createLibp2p } from 'libp2p';
+import { gossipsub } from '@chainsafe/libp2p-gossipsub';
 import { noise } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
@@ -13,7 +14,6 @@ import { saveEthPrice } from './db.js';
 import pkg from 'ethereumjs-util';
 const { ecsign, toBuffer, bufferToHex } = pkg;
 import crypto from 'crypto';
-import { gossipsub } from '@chainsafe/libp2p-gossipsub';
 import { bootstrap } from '@libp2p/bootstrap';
 import { identify } from '@libp2p/identify';
 
@@ -75,6 +75,8 @@ const logSubscribedTopics = () => {
 libp2p.addEventListener('peer:connect', (event) => {
   logPeers();
   console.log('Connected to peer:', event.detail.remotePeer.toString());
+  libp2p.services.pubsub.subscribe(topic);
+  console.log(`Subscribed to topic: ${topic}`);
 });
 libp2p.addEventListener('peer:disconnect', (event) => {
   logPeers();
