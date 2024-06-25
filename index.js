@@ -19,11 +19,13 @@ import { identify } from '@libp2p/identify';
 const privateKey = crypto.randomBytes(32);
 
 const fetchEthPrice = async () => {
+  console.log('Fetching ETH price...');
   const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
   return response.data.ethereum.usd;
 };
 
 const signMessage = (message) => {
+  console.log('Signing message...');
   const messageHash = crypto.createHash('sha256').update(message).digest();
   const { r, s, v } = ecsign(messageHash, privateKey);
   return { r: bufferToHex(r), s: bufferToHex(s), v };
@@ -86,10 +88,14 @@ libp2p.services.pubsub.addEventListener('message', async (event) => {
     signatures.push(newSignature);
 
     if (signatures.length >= 3) {
+      console.log('Message has 3 or more signatures, saving to database...');
       await saveEthPrice(message.price, signatures);
+      console.log('Message saved to database.');
     } else {
+      console.log('Republishing message with new signature...');
       const newMessage = JSON.stringify({ price: message.price, signatures });
       await libp2p.services.pubsub.publish(topic, fromString(newMessage));
+      console.log('Message republished.');
     }
   } catch (error) {
     console.error('Error processing message:', error);
@@ -143,7 +149,6 @@ if (isBootstrapNode) {
 
 if (!isBootstrapNode) {
   setInterval(async () => {
-    console.log('Fetching ETH price...');
     const price = await fetchEthPrice();
     console.log("ETH PRICE", price);
     const message = JSON.stringify({ price, signatures: [signMessage(price.toString())] });
