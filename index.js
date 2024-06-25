@@ -1,92 +1,74 @@
 import { createLibp2p } from 'libp2p';
 import { gossipsub } from '@chainsafe/libp2p-gossipsub';
-import { tcp } from '@libp2p/tcp';
-import { webSockets } from '@libp2p/websockets';
-import { mplex } from '@libp2p/mplex';
 import { noise } from '@chainsafe/libp2p-noise';
-import { bootstrap } from '@libp2p/bootstrap';
-import { identifyService } from '@libp2p/identify';
-import { MemoryBlockstore } from 'blockstore-core';
-import pkg from 'pg';
-const { Pool } = pkg;
-import fetch from 'node-fetch';
+import { yamux } from '@chainsafe/libp2p-yamux';
+import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
+import { dcutr } from '@libp2p/dcutr';
+import { identify } from '@chainsafe/libp2p-identify';
+import { webRTC } from '@libp2p/webrtc';
+import { webSockets } from '@libp2p/websockets';
+import * as filters from '@libp2p/websockets/filters';
+import { multiaddr } from '@multiformats/multiaddr';
+import { fromString, toString } from 'uint8arrays';
+import axios from 'axios';
+import { saveEthPrice } from './db.js';
+import pkg from 'ethereumjs-util';
+const { ecsign, toBuffer, bufferToHex } = pkg;
+import crypto from 'crypto';
 
-const pool = new Pool({
-  connectionString: process.env.POSTGRES_CONNECTION_STRING,
+const privateKey = crypto.randomBytes(32);
+
+const fetchEthPrice = async () => {
+  const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
+  return response.data.ethereum.usd;
+};
+
+const signMessage = (message) => {
+  const messageHash = crypto.createHash('sha256').update(message).digest();
+  const { r, s, v } = ecsign(messageHash, privateKey);
+  return { r: bufferToHex(r), s: bufferToHex(s), v };
+};
+
+const libp2p = await createLibp2p({
+  addresses: {
+    listen: ['/webrtc'],
+  },
+  transports: [
+    webSockets({ filter: filters.all }),
+    webRTC(),
+    circuitRelayTransport({ discoverRelays: 1 }),
+  ],
+  connectionEncryption: [noise()],
+  streamMuxers: [yamux()],
+  services: {
+    identify: identify(),
+    pubsub: gossipsub(),
+    dcutr: dcutr(),
+  },
+  connectionManager: {
+    minConnections: 0,
+  },
 });
 
-async function insertPrice(price, signatures) {
-  const client = await pool.connect();
-  try {
-    const result = await client.query(
-      'INSERT INTO eth_prices (price, signatures, timestamp) VALUES ($1, $2, $3) RETURNING *',
-      [price, signatures, new Date()]
-    );
-    return result.rows[0];
-  } finally {
-    client.release();
+const topic = 'eth-price';
+
+libp2p.services.pubsub.subscribe(topic);
+libp2p.services.pubsub.addEventListener('message', async (event) => {
+  const message = JSON.parse(toString(event.detail.data));
+  const signatures = message.signatures || [];
+  const newSignature = signMessage(message.price.toString());
+  signatures.push(newSignature);
+
+  if (signatures.length >= 3) {
+    await saveEthPrice(message.price, signatures);
+  } else {
+    const newMessage = JSON.stringify({ price: message.price, signatures });
+    await libp2p.services.pubsub.publish(topic, fromString(newMessage));
   }
-}
+});
 
-const createNode = async () => {
-  const node = await createLibp2p({
-    addresses: {
-      listen: ['/ip4/0.0.0.0/tcp/0', '/ip4/127.0.0.1/tcp/0/ws']
-    },
-    transports: [
-      tcp(),
-      webSockets()
-    ],
-    streamMuxers: [
-      mplex()
-    ],
-    connectionEncryption: [
-      noise()
-    ],
-    peerDiscovery: [
-      bootstrap({
-        list: [
-          '/ip4/127.0.0.1/tcp/15002/ws/p2p/QmPeer1',
-          '/ip4/127.0.0.1/tcp/15003/ws/p2p/QmPeer2'
-        ]
-      })
-    ],
-    services: {
-      pubsub: gossipsub(),
-      identify: identifyService()
-    },
-    datastore: new MemoryBlockstore()
-  });
-
-  return node;
-};
-
-const main = async () => {
-  const node = await createNode();
-
-  node.services.pubsub.addEventListener('message', async (message) => {
-    const decodedMessage = new TextDecoder().decode(message.detail.data);
-    console.log(`${message.detail.topic}: ${decodedMessage}`);
-
-    // Here you should handle signing the message and re-emitting it.
-    // Also, if the message has at least 3 signatures, insert it into the database.
-  });
-
-  node.services.pubsub.subscribe('eth-price');
-
-  setInterval(async () => {
-    try {
-      const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
-      const data = await response.json();
-      const price = data.ethereum.usd;
-
-      // Sign the message and publish it
-      const message = { price, timestamp: new Date().toISOString(), signatures: [] };
-      node.services.pubsub.publish('eth-price', new TextEncoder().encode(JSON.stringify(message)));
-    } catch (error) {
-      console.error('Error fetching ETH price:', error);
-    }
-  }, 30000);
-};
-
-main().catch(console.error);
+setInterval(async () => {
+  const price = await fetchEthPrice();
+  const message = JSON.stringify({ price, signatures: [signMessage(price.toString())] });
+  await libp2p.services.pubsub.publish(topic, fromString(message));
+}, 30000);
