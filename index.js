@@ -30,7 +30,7 @@ const signMessage = (message) => {
 };
 
 const isBootstrapNode = process.env.BOOTSTRAP_NODE === 'true';
-const bootstrapNodeAddr = '/ip4/10.146.66.56/tcp/15002/ws/p2p/12D3KooWRkiCiyU9cZYs8TkUKahCXNj1w5beHs1nvtPF7GdzGW4B';
+const bootstrapNodeAddr = '/ip4/127.0.0.1/tcp/15002/ws/p2p/12D3KooWLcBfktPoaD2V39VnGrnPkZuckaSUAo7rgNBPMS9HYiYX';
 
 const libp2p = await createLibp2p({
   addresses: {
@@ -109,12 +109,19 @@ if (isBootstrapNode) {
     console.log('No multiaddresses found.');
   }
 } else {
-  try {
-    await libp2p.dial(multiaddr(bootstrapNodeAddr));
-    console.log(`Dialed bootstrap node at ${bootstrapNodeAddr}`);
-  } catch (error) {
-    console.error(`Failed to dial bootstrap node: ${error.message}`);
-  }
+  const dialBootstrapNode = async (retryCount = 0) => {
+    try {
+      await libp2p.dial(multiaddr(bootstrapNodeAddr));
+      console.log(`Dialed bootstrap node at ${bootstrapNodeAddr}`);
+    } catch (error) {
+      console.error(`Failed to dial bootstrap node: ${error.message}`);
+      if (retryCount < 5) {
+        console.log(`Retrying to dial bootstrap node... (${retryCount + 1}/5)`);
+        setTimeout(() => dialBootstrapNode(retryCount + 1), 5000);
+      }
+    }
+  };
+  await dialBootstrapNode();
 }
 
 if (!isBootstrapNode) {
@@ -126,5 +133,5 @@ if (!isBootstrapNode) {
     console.log("MESSAGE", message);
     await libp2p.services.pubsub.publish(topic, fromString(message));
     console.log("PUBLISHED");
-  }, 30000);
+  }, 10000);
 }
