@@ -72,13 +72,20 @@ const logSubscribedTopics = () => {
   console.log('Subscribed topics:', subscribedTopics);
 };
 
-libp2p.addEventListener('peer:connect', logPeers);
-libp2p.addEventListener('peer:disconnect', logPeers);
+libp2p.addEventListener('peer:connect', (event) => {
+  logPeers();
+  console.log('Connected to peer:', event.detail.remotePeer.toString());
+});
+libp2p.addEventListener('peer:disconnect', (event) => {
+  logPeers();
+  console.log('Disconnected from peer:', event.detail.remotePeer.toString());
+});
 
 libp2p.services.pubsub.subscribe(topic);
 libp2p.services.pubsub.addEventListener('subscription-change', logSubscribedTopics);
 
 libp2p.services.pubsub.addEventListener('message', async (event) => {
+  console.log('Message received:', event.detail);
   const message = JSON.parse(toString(event.detail.data));
   const signatures = message.signatures || [];
   const newSignature = signMessage(message.price.toString());
@@ -105,7 +112,6 @@ setInterval(async () => {
   } catch (error) {
     console.error('PublishError:', error.message);
   }
-  console.log()
 }, 30000);
 
 console.log('Node started.');
