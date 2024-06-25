@@ -1,63 +1,92 @@
-import Libp2p from 'libp2p';
-import TCP from '@libp2p/tcp';
-import WebSockets from '@libp2p/websockets';
-import { NOISE } from '@chainsafe/libp2p-noise';
-import MPLEX from '@libp2p/mplex';
+import { createLibp2p } from 'libp2p';
 import { gossipsub } from '@chainsafe/libp2p-gossipsub';
-import fetchEthPrice from './fetchPrice.js';
-import { insertPrice } from './db.js';
-import crypto from 'crypto';
-import config from './config.js';
+import { tcp } from '@libp2p/tcp';
+import { webSockets } from '@libp2p/websockets';
+import { mplex } from '@libp2p/mplex';
+import { noise } from '@chainsafe/libp2p-noise';
+import { bootstrap } from '@libp2p/bootstrap';
+import { identifyService } from '@libp2p/identify';
+import { MemoryBlockstore } from 'blockstore-core';
+import pkg from 'pg';
+const { Pool } = pkg;
+import fetch from 'node-fetch';
 
-const createNode = async (id) => {
-  const node = await Libp2p.create({
+const pool = new Pool({
+  connectionString: process.env.POSTGRES_CONNECTION_STRING,
+});
+
+async function insertPrice(price, signatures) {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      'INSERT INTO eth_prices (price, signatures, timestamp) VALUES ($1, $2, $3) RETURNING *',
+      [price, signatures, new Date()]
+    );
+    return result.rows[0];
+  } finally {
+    client.release();
+  }
+}
+
+const createNode = async () => {
+  const node = await createLibp2p({
     addresses: {
-      listen: ['/ip4/0.0.0.0/tcp/0', '/ip4/0.0.0.0/tcp/0/ws'],
+      listen: ['/ip4/0.0.0.0/tcp/0', '/ip4/127.0.0.1/tcp/0/ws']
     },
-    transports: [TCP(), WebSockets()],
-    connectionEncryption: [NOISE()],
-    streamMuxers: [MPLEX()],
+    transports: [
+      tcp(),
+      webSockets()
+    ],
+    streamMuxers: [
+      mplex()
+    ],
+    connectionEncryption: [
+      noise()
+    ],
+    peerDiscovery: [
+      bootstrap({
+        list: [
+          '/ip4/127.0.0.1/tcp/15002/ws/p2p/QmPeer1',
+          '/ip4/127.0.0.1/tcp/15003/ws/p2p/QmPeer2'
+        ]
+      })
+    ],
     services: {
       pubsub: gossipsub(),
+      identify: identifyService()
     },
+    datastore: new MemoryBlockstore()
   });
 
-  node.services.pubsub.addEventListener('message', async (message) => {
-    const data = JSON.parse(new TextDecoder().decode(message.detail.data));
-    const signatures = data.signatures || [];
-    const hash = crypto.createHash('sha256').update(data.price.toString()).digest('hex');
-    const signature = crypto.createSign('SHA256').update(hash).sign(node.peerId.privKey).toString('hex');
-    signatures.push(signature);
+  return node;
+};
 
-    if (signatures.length >= 3) {
-      await insertPrice(data.price, signatures);
-    } else {
-      data.signatures = signatures;
-      node.services.pubsub.publish('eth-price', new TextEncoder().encode(JSON.stringify(data)));
-    }
+const main = async () => {
+  const node = await createNode();
+
+  node.services.pubsub.addEventListener('message', async (message) => {
+    const decodedMessage = new TextDecoder().decode(message.detail.data);
+    console.log(`${message.detail.topic}: ${decodedMessage}`);
+
+    // Here you should handle signing the message and re-emitting it.
+    // Also, if the message has at least 3 signatures, insert it into the database.
   });
 
   node.services.pubsub.subscribe('eth-price');
 
   setInterval(async () => {
-    const price = await fetchEthPrice();
-    if (price) {
-      const data = { price, signatures: [] };
-      node.services.pubsub.publish('eth-price', new TextEncoder().encode(JSON.stringify(data)));
+    try {
+      const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
+      const data = await response.json();
+      const price = data.ethereum.usd;
+
+      // Sign the message and publish it
+      const message = { price, timestamp: new Date().toISOString(), signatures: [] };
+      node.services.pubsub.publish('eth-price', new TextEncoder().encode(JSON.stringify(message)));
+    } catch (error) {
+      console.error('Error fetching ETH price:', error);
     }
-  }, config.GOSSIP_INTERVAL);
-
-  return node;
+  }, 30000);
 };
 
-const startNodes = async () => {
-  const nodes = [];
-  for (let i = 0; i < config.NODE_COUNT; i++) {
-    const node = await createNode(i);
-    nodes.push(node);
-    await node.start();
-    console.log(`Node ${i} started`);
-  }
-};
-
-startNodes();
+main().catch(console.error);
