@@ -53,19 +53,19 @@ This project is a simplified version of Chainlink using Node.js and libp2p. It s
 
     - Set the BOOTSTRAP_ADDRESS environment variable in the .env using the address of the previously Bootstrap node deployed.
 
-    '''npm run start'''
+    `npm run start`
 
 8. Start the second nodes:
 
-    '''npm run start'''
+    `npm run start`
 
 9. Start the third nodes:
 
-    '''npm run start'''
+    `npm run start`
 
 10. Show the data in the database:
 
-    npm run show
+    `npm run show`
 
 For more information, contact me at herve76@gmail.com
 
