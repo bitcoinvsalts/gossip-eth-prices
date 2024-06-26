@@ -12,16 +12,14 @@ import { fromString, toString } from 'uint8arrays';
 import axios from 'axios';
 import { saveEthPrice } from './db.js';
 import pkg from 'ethereumjs-util';
-const { ecsign, toBuffer, bufferToHex } = pkg;
+const { ecsign, toBuffer, bufferToHex, keccak256 } = pkg;
 import crypto from 'crypto';
 import { identify } from '@libp2p/identify';
-import { mdns } from '@libp2p/mdns';
-import { bootstrap } from '@libp2p/bootstrap'; // Import the bootstrap module
-import dotenv from 'dotenv';
-
-dotenv.config();
 
 const privateKey = crypto.randomBytes(32);
+const nodeId = keccak256(privateKey).toString('hex');
+
+let lastMessageTime = 0;
 
 const fetchEthPrice = async () => {
   const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
@@ -33,6 +31,13 @@ const signMessage = (message) => {
   const { r, s, v } = ecsign(messageHash, privateKey);
   return { r: bufferToHex(r), s: bufferToHex(s), v };
 };
+
+const isSignatureExist = (signatures, newSignature) => {
+  return signatures.some(sig => sig.r === newSignature.r && sig.s === newSignature.s && sig.v === newSignature.v);
+};
+
+const isBootstrapNode = process.env.BOOTSTRAP_NODE === 'true';
+const bootstrapNodeAddr = process.env.BOOTSTRAP_ADDRESS;
 
 const createLibp2pNode = async (port, retryCount = 0) => {
   try {
@@ -47,15 +52,7 @@ const createLibp2pNode = async (port, retryCount = 0) => {
       ],
       connectionEncryption: [noise()],
       streamMuxers: [yamux()],
-      peerDiscovery: [
-        mdns(), // Add mDNS for local network peer discovery
-        bootstrap({
-          list: [
-            '/ip4/127.0.0.1/tcp/15002/ws/p2p/12D3KooWKr3rmsKnuojRd2QbWYE1AYDaFPvQdcGUoSMvRK9iJK2T',
-            '/ip4/127.0.0.1/tcp/15003/ws/p2p/12D3KooWKr3rmsKnuojRd2QbWYE1AYDaFPvQdcGUoSMvRK9iJK2U'
-          ]
-        })
-      ],
+      peerDiscovery: [],
       services: {
         identify: identify(),
         pubsub: gossipsub(),
@@ -79,7 +76,7 @@ const createLibp2pNode = async (port, retryCount = 0) => {
   }
 };
 
-const port = Math.floor(Math.random() * (16000 - 15003 + 1)) + 15003;
+const port = isBootstrapNode ? 15002 : Math.floor(Math.random() * (16000 - 15003 + 1)) + 15003;
 const libp2p = await createLibp2pNode(port);
 
 const topic = 'eth-price';
@@ -91,24 +88,32 @@ libp2p.services.pubsub.addEventListener('message', async (event) => {
   try {
     const message = JSON.parse(toString(event.detail.data));
     console.log('Message received:', message);
+
     const signatures = message.signatures || [];
     const newSignature = signMessage(message.price.toString());
 
-    // Check if this node has already signed the message
-    if (signatures.some(sig => sig.r === newSignature.r && sig.s === newSignature.s && sig.v === newSignature.v)) {
+    if (!isSignatureExist(signatures, newSignature)) {
+      signatures.push(newSignature);
+      console.log('New signature added:', newSignature);
+    } else {
       console.log('Signature already exists. Ignoring.');
-      return;
+      return; // Do not republish if signature already exists
     }
 
-    signatures.push(newSignature);
-
-    if (signatures.length >= 3) {
+    console.log(`Total signatures: ${signatures.length}`);
+    const currentTime = Date.now();
+    if (signatures.length >= 3 && currentTime - lastMessageTime > 30000) {
+      console.log('Message has enough signatures and 30 seconds have passed since the last message. Saving to database...');
       await saveEthPrice(message.price, signatures);
-      console.log('Message saved to DB:', { price: message.price, signatures });
-    } else {
+      lastMessageTime = currentTime;
+      console.log('Message saved to database.');
+    } else if (signatures.length < 3) {
+      console.log('Republishing message with new signature...');
       const newMessage = JSON.stringify({ price: message.price, signatures });
       await libp2p.services.pubsub.publish(topic, fromString(newMessage));
-      console.log('Republished message:', newMessage);
+      console.log('Message republished.');
+    } else {
+      console.log('Waiting for 30 seconds to pass before saving the message to the database.');
     }
   } catch (error) {
     console.error('Error processing message:', error);
@@ -136,22 +141,38 @@ libp2p.addEventListener('peer:disconnect', (connection) => {
 await libp2p.start();
 console.log('Node started.');
 
-setTimeout(async () => {
-  console.log('Starting ETH price fetch and publish cycle...');
+if (isBootstrapNode) {
+  const multiaddrs = libp2p.getMultiaddrs();
+  if (multiaddrs.length > 0) {
+    console.log('Bootstrap node addresses:');
+    multiaddrs.forEach(addr => console.log(addr.toString()));
+  } else {
+    console.log('No multiaddresses found.');
+  }
+} else {
+  const dialBootstrapNode = async (retryCount = 0) => {
+    try {
+      await libp2p.dial(multiaddr(bootstrapNodeAddr));
+      console.log(`Dialed bootstrap node at ${bootstrapNodeAddr}`);
+    } catch (error) {
+      console.error(`Failed to dial bootstrap node: ${error.message}`);
+      if (retryCount < 5) {
+        console.log(`Retrying to dial bootstrap node... (${retryCount + 1}/5)`);
+        setTimeout(() => dialBootstrapNode(retryCount + 1), 5000);
+      }
+    }
+  };
+  await dialBootstrapNode();
+}
+
+if (!isBootstrapNode) {
   setInterval(async () => {
     console.log('Fetching ETH price...');
     const price = await fetchEthPrice();
     console.log("ETH PRICE", price);
     const message = JSON.stringify({ price, signatures: [signMessage(price.toString())] });
     console.log("MESSAGE", message);
-
-    const subscribers = libp2p.services.pubsub.getSubscribers(topic);
-    console.log(`Subscribers: ${subscribers.length}`);
-    if (subscribers.length > 0) {
-      await libp2p.services.pubsub.publish(topic, fromString(message));
-      console.log("PUBLISHED");
-    } else {
-      console.log("No subscribers found, message not published.");
-    }
+    await libp2p.services.pubsub.publish(topic, fromString(message));
+    console.log("PUBLISHED");
   }, 30000);
-}, 20000); // Increase initial wait time to 20 seconds
+}
