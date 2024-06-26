@@ -180,12 +180,5 @@ const startNode = async (port) => {
   }
 };
 
-if (isBootstrapNode) {
-  await startNode(15002);
-} else {
-  const numNodes = parseInt(process.env.NUM_NODES) || 3;
-  for (let i = 0; i < numNodes; i++) {
-    const port = 15003 + i;
-    await startNode(port);
-  }
-}
+const port = parseInt(process.env.PORT) || (isBootstrapNode ? 15002 : Math.floor(Math.random() * (16000 - 15003 + 1)) + 15003);
+await startNode(port);

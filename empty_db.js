@@ -13,16 +13,17 @@ const pool = new Pool({
   port: process.env.DB_PORT,
 });
 
-export const saveEthPrice = async (price, signatures) => {
+const emptyDatabase = async () => {
   const client = await pool.connect();
   try {
-    const query = 'INSERT INTO eth_prices(price, signatures) VALUES($1, $2)';
-    const values = [price, JSON.stringify(signatures)];
-    await client.query(query, values);
-    console.log('Price saved to DB:', { price, signatures });
+    const query = 'DELETE FROM eth_prices';
+    await client.query(query);
+    console.log('All records from eth_prices have been deleted.');
   } catch (error) {
-    console.error('Error saving price to DB:', error);
+    console.error('Error deleting records from database:', error);
   } finally {
     client.release();
   }
 };
+
+emptyDatabase();
