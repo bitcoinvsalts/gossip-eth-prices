@@ -5,8 +5,10 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js",
-    "start2": "node index2.js"
+    "db": "node create_db.js",
+    "bootstrap": "BOOTSTRAP_NODE=true node index.js",
+    "start": "BOOTSTRAP_NODE=false node index.js",
+    "show": "node show_data.js"
   },
   "repository": {
     "type": "git",

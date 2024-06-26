@@ -43,22 +43,27 @@ This project is a simplified version of Chainlink using Node.js and libp2p. It s
 
 5. Create the table in the database
 
-    node create_db.js
+   npm run db
 
-6. Start the bootstrap node:
+6. Start the Bootstrap node:
 
     - Make sure BOOTSTRAP_NODE environment variable is set to true in .env file
     - Run the following command:
 
-    npm start
+    npm run bootstrap
 
 7. Start the nodes:
 
     - Make sure BOOTSTRAP_NODE environment variable is set to false in .env file
     - Set the BOOTSTRAP_ADDRESS environment variable in the .env using the address of the previously Bootstrap node deployed.
+    - Set the NUM_NODES environment variable in the .env
     - Run the following command:
 
-    npm start
+    '''npm run start'''
+
+8. Show the data in the database:
+
+    npm run show
 
 For more information, contact me at herve76@gmail.com
 

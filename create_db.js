@@ -1,6 +1,5 @@
 import pkg from 'pg';
 import dotenv from 'dotenv';
-
 dotenv.config();
 
 const { Pool } = pkg;
@@ -57,10 +56,11 @@ const createDatabaseAndTable = async () => {
     console.log('Table eth_prices created successfully.');
 
     dbClient.release();
+    dbPool.end(); // Close the connection pool for the new database
   } catch (error) {
     console.error('Error creating database and table:', error);
   } finally {
-    pool.end();
+    await pool.end();
   }
 };
 
