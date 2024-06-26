@@ -22,12 +22,12 @@ This project is a simplified version of Chainlink using Node.js and libp2p. It s
 
 1. Clone the repository:
 
-   git clone https://github.com/bitcoinvsalts/gossip-eth-prices
-   cd gossip-eth-prices
+   `git clone https://github.com/bitcoinvsalts/gossip-eth-prices`
+   `cd gossip-eth-prices`
 
 2. Run PostgreSQL:
 
-    docker-compose up -d
+    `docker-compose up -d`
 
 3. Edit the following environment variables in the .env file:
 
@@ -39,15 +39,15 @@ This project is a simplified version of Chainlink using Node.js and libp2p. It s
 
 4. Install the dependencies:
 
-    npm install
+    `npm install`
 
 5. Create the table in the database
 
-   npm run db
+   `npm run db`
 
 6. Start the Bootstrap node:
 
-    npm run bootstrap
+    `npm run bootstrap`
 
 7. Start the first nodes:
 
