@@ -18,13 +18,21 @@ const createDatabaseAndTable = async () => {
   try {
     const client = await pool.connect();
 
-    // Create database if it doesn't exist
-    await client.query(`CREATE DATABASE ${process.env.DB_DATABASE}`);
-    console.log(`Database ${process.env.DB_DATABASE} created successfully.`);
+    // Check if the database exists
+    const checkDbExistsQuery = `SELECT 1 FROM pg_database WHERE datname='${process.env.DB_DATABASE}'`;
+    const res = await client.query(checkDbExistsQuery);
+
+    if (res.rowCount === 0) {
+      // Create database if it doesn't exist
+      await client.query(`CREATE DATABASE ${process.env.DB_DATABASE}`);
+      console.log(`Database ${process.env.DB_DATABASE} created successfully.`);
+    } else {
+      console.log(`Database ${process.env.DB_DATABASE} already exists.`);
+    }
 
     client.release();
 
-    // Connect to the newly created database
+    // Connect to the newly created or existing database
     const dbPool = new Pool({
       user: process.env.DB_USER,
       host: process.env.DB_HOST,
